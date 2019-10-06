@@ -1,4 +1,7 @@
 import numpy as np
+from utils.zobrist import generate_zobrist
+from utils.base import generate_base
+import copy
 
 
 class Cube():
@@ -10,6 +13,21 @@ class Cube():
 
   def __init__(self):
     print("initializing cube...")
+    self.zobrist_arr_ = generate_zobrist()
+    # all of different bases:
+    self.bases_ = generate_base()
+    self.faces_ = np.array([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+        [0, -1, 0],
+        [-1, 0, 0]], dtype=np.int8)
+    self.variant_faces_ = np.zeros((48, 6, 3), dtype=np.int8)
+    for idx, base in enumerate(self.bases_):
+      self.variant_faces_[idx] = np.dot(self.faces_, base)
+    # array of points. contains 54 points.
+    self.index_arr_ = None
     self.color_ = np.ones((5, 5, 5), dtype=np.uint8)
     self.base_indices = []
     for y in range(-1, 2):
@@ -56,6 +74,8 @@ class Cube():
     for idx, v in enumerate(self.face_vectors):
       self.rotate_from[idx] = np.dot(front_rot_from, v)
       self.rotate_to[idx] = np.dot(front_rot_to, v)
+    self.create_index_arr()
+    self.reset_cube()
 
   def set_color(self, point, color):
     p = point + 2
@@ -70,8 +90,9 @@ class Cube():
   def rotate(self, face):
     from_color = self.color_.copy()
     for from_pt, to_pt in zip(self.rotate_from[face], self.rotate_to[face]):
-      from_pt += 2
-      self.set_color(to_pt, from_color[(from_pt[0], from_pt[1], from_pt[2])])
+      from_idx = from_pt + 2
+      self.set_color(to_pt, from_color[(from_idx[0], from_idx[1], from_idx[2])])
+    self.update_zobrist()
 
   def __str__(self):
     res = ""
@@ -84,46 +105,71 @@ class Cube():
       res += "\n"
     return str(self.color_)
 
-  """
-  arr = np.array([[[ 1  1  1  1  1]
-  [ 1 51 52 53  1]
-  [ 1 48 49 50  1]
-  [ 1 45 46 47  1]
-  [ 1  1  1  1  1]]
+  def copy(self):
+    c = copy.copy(self)
+    c.color_ = self.color_.copy()
+    c.zobrist_ = self.zobrist_.copy()
+    return c
 
- [[ 1  9 10 11  1]
-  [18  1  1  1 29]
-  [21  1  1  1 32]
-  [24  1  1  1 35]
-  [ 1 42 43 44  1]]
+  """Resets cube state: face X is all of color X."""
+  def reset_cube(self):
+    for idx, rot in enumerate(self.face_vectors):
+      for base_idx in self.base_indices:
+        rot_idx = np.dot(base_idx, rot)
+        self.set_color(rot_idx, idx)
+    self.update_zobrist()
 
- [[ 1 12 13 14  1]
-  [19  1  1  1 28]
-  [22  1  1  1 31]
-  [25  1  1  1 34]
-  [ 1 39 40 41  1]]
-
- [[ 1 15 16 17  1]
-  [20  1  1  1 27]
-  [23  1  1  1 30]
-  [26  1  1  1 33]
-  [ 1 36 37 38  1]]
-
- [[ 1  1  1  1  1]
-  [ 1  0  1  2  1]
-  [ 1  3  4  5  1]
-  [ 1  6  7  8  1]
-  [ 1  1  1  1  1]]])
-
-  """
   def read_cube(self, arr):
     for idx, rot in enumerate(self.face_vectors):
       for base_idx in self.base_indices:
         rot_idx = np.dot(base_idx, rot)
         p = rot_idx + 2
         self.set_color(rot_idx, arr[p[0], p[1], p[2]])
+    self.update_zobrist()
 
+  def create_index_arr(self):
+    self.index_arr_ = np.zeros((54, 3), dtype=np.int8)
+    index_arr_idx = 0
+    for idx, rot in enumerate(self.face_vectors):
+      for base_idx in self.base_indices:
+        rot_idx = np.dot(base_idx, rot)
+        self.index_arr_[index_arr_idx] = rot_idx
+        index_arr_idx += 1
+    self.variant_index_arr_ = np.zeros((48, 54, 3), dtype=np.int8)
+    for idx, base in enumerate(self.bases_): # 48x3x3
+      self.variant_index_arr_[idx] = np.dot(self.index_arr_, base)
+    self.update_zobrist()
 
+  def read_index_arr(self, index_arr):
+    self.index_arr_ = index_arr
+    self.variant_index_arr_ = np.zeros((48, 54, 3), dtype=np.int8)
+    for idx, base in enumerate(self.bases_): # 48x3x3
+      self.variant_index_arr_[idx] = np.dot(index_arr, base)
 
+  def read_zobrist_arr(self, zobrist_arr):
+    self.zobrist_arr_ = zobrist_arr
 
+  """What does current color maps to if under the variant_face system(6x3)"""
+  def get_color_dict(self, variant_face):
+    # this can be pre calculated.
+    d = {}
+    for idx, p in enumerate(variant_face):
+      d[self.get_color(p * 2)] = idx
+    return d
 
+  def save(self, fname):
+    print('saving cube to: ', fname)
+    np.save(fname, self.color_)
+
+  def update_zobrist(self):
+    self.zobrist_ = set()
+    for variant_face, variant_index_arr in zip(self.variant_faces_, self.variant_index_arr_):
+      d = self.get_color_dict(variant_face)
+      zobrist = 0
+      for idx, pt in enumerate(variant_index_arr):
+        n = d[self.get_color(pt)]
+        zobrist ^= n * self.zobrist_arr_[idx]
+      self.zobrist_.add(zobrist)
+
+  def __eq__(self, other):
+    return len(self.zobrist_ & other.zobrist_) != 0
