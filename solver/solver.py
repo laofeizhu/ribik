@@ -21,7 +21,6 @@ class Solver():
     total_steps = 0
     while not q.empty():
       total_steps += 1
-      print('searching steps: ', total_steps)
       print('number of states visited: ', len(self.visited_))
       size = q.qsize()
       p = 0
@@ -29,10 +28,9 @@ class Solver():
       for n in range(size):
         new_p = int(n * 100 / size)
         if new_p > p:
-          print('finished percentage: ', new_p)
           p = new_p
           time_now = datetime.now()
-          print('elapsed time: ', time_now - time)
+          print('step: ', total_steps, '. percentage: ', p, '. elapsed time: ', time_now - time)
           time = time_now
         state = q.get()
         cube = state['cube']
